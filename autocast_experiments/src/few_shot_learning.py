@@ -8,6 +8,7 @@ import time
 import argparse
 import os
 import json
+import collections
 
 openai.api_key = os.getenv('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')
 
@@ -51,17 +52,44 @@ def get_embedding(text, model="text-embedding-ada-002"):
 def get_cosine_similarity(q1, q2):
     return round(cosine_similarity([q1], [q2])[0][0], 8)
 
-def get_few_shot_output(few_shot_input):
-    start = time.time()
-    time.sleep(codex_time_delay) #to avoid an openai.error.RateLimitError
-    few_shot_output = openai.Completion.create(engine = codex_engine, 
-                                            prompt = few_shot_input, 
-                                            max_tokens = few_shot_max_tokens, 
-                                            temperature = engine_temperature, 
-                                            top_p = engine_topP, output_scores=True)['choices'][0]['text']
-    print('Codex API call time: ' + str(time.time()-start) + '\n')
-    #print(few_shot_output)
-    return few_shot_output
+# define function to select the correct answer using self-consistent sampling
+def select_answer(prompt, num_samples=10, temperature=0.5, similarity_threshold=0.7):
+    # generate samples using OpenAI's API
+    samples = openai.Completion.create(
+        engine="text-davinci-002",
+        prompt=prompt,
+        max_tokens=1024,
+        n=num_samples,
+        temperature=temperature,
+        stop=None,
+        frequency_penalty=0,
+        presence_penalty=0
+    )
+    # extract the generated answers from the samples
+    answers = [choice.text.strip() for choice in samples.choices]
+    summ = 0
+    for choice in collections.Counter(answers).values():
+      summ += choice
+    # count the frequency of each answer
+    answer_counts = collections.Counter(answers)
+    # get the most common answer and its count
+    generated_answer = answer_counts.most_common(1)[0][0]
+    frequency_of_generated_answer = answer_counts.most_common(1)[0][1]
+
+    # return the selected answer and its probability
+    return generated_answer, frequency_of_generated_answer/summ
+
+# def get_few_shot_output(few_shot_input):
+#     start = time.time()
+#     time.sleep(codex_time_delay) #to avoid an openai.error.RateLimitError
+#     few_shot_output = openai.Completion.create(engine = codex_engine, 
+#                                             prompt = few_shot_input, 
+#                                             max_tokens = few_shot_max_tokens, 
+#                                             temperature = engine_temperature, 
+#                                             top_p = engine_topP, output_scores=True)['choices'][0]['text']
+#     print('Codex API call time: ' + str(time.time()-start) + '\n')
+#     #print(few_shot_output)
+#     return few_shot_output
 
 def get_few_shot_input(orig_question, choices, similarity_list):
     # get similar_question, similar_answer, similar_chatgpt_answer, originial_question
@@ -76,7 +104,7 @@ def get_few_shot_input(orig_question, choices, similarity_list):
         few_shot_input += '\nBackground' + background
 
     few_shot_input += '\nQuestion: ' + orig_question
-    few_shot_input += '\nOnly answer by alphabet, do not explain: ' + choices
+    few_shot_input += '\nOnly answer with alphabet, do not explain: ' + choices
     return few_shot_input
 
 def run(question, choices):
@@ -100,6 +128,6 @@ def run(question, choices):
     few_shot_input = get_few_shot_input(question, choices, similar_question_indices)
     
     #give it as input to few shot and check the answers
-    few_shot_output = get_few_shot_output(few_shot_input)
+    answer, probability = select_answer(few_shot_input)
     
-    return few_shot_output
+    return answer, probability
