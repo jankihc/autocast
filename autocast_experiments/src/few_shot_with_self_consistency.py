@@ -16,23 +16,25 @@ warnings.filterwarnings('ignore')
 # Can change to improve performance
 #####
 # Change this openai.api_key to your key
-openai.api_key = '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'
+openai.api_key = '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'
 #####
+autocast_train_with_dates = pd.read_csv('autocast_questions_shortened_with_dates.csv')
 
 EMBEDDING_MODEL = 'text-embedding-ada-002'
 EMBEDDING_MODEL_answer = 'gpt-3.5-turbo'
 embedding_cache_path = 'data/embedding_cache.pkl'
+gpt3_engine = "text-davinci-002"
 few_shot_max_tokens = 5
 engine_topP = 1
 engine_temperature = 0
 codex_time_delay = 3
 # top k exampels for few-shot learning
 k = 6
-rate_limit_per_minute = 3
+rate_limit_per_minute = 2
 # delay request in seconds to avoid Openai.RateLimitError
 delay = 60 / rate_limit_per_minute
 # Obtain number of questions on the dataset
-desire_index = 200
+desire_index = 2
 
 
 # Brier score for the performance on the train set
@@ -158,16 +160,23 @@ def calculate_answer_probability(answer_arr, choice_arr, qtype):
         res = max(counts / N)
         return res
 
+def get_few_shot_output(input):
+    few_shot_output = openai.Completion.create(engine = gpt3_engine, 
+                                            prompt = input, 
+                                            max_tokens = few_shot_max_tokens, 
+                                            temperature = engine_temperature, 
+                                            top_p = engine_topP)['choices'][0]['text']
+    return few_shot_output
 
 # Get GPT answers from the prompt
-def evaluate(eval_prompt, examples):
+def evaluate(eval_prompt, examples, role):
     curr_prompt = f"""    
         {examples}
         We then have the this question: 
         {eval_prompt}
         """
     # print(curr_prompt)
-    
+    role_content = "You are " + role
     answers = []
     # Perform self-consistency sampling 
     # By asking the GPT-3 model 10 times
@@ -181,7 +190,7 @@ def evaluate(eval_prompt, examples):
             max_tokens=20,
             n=10,
             messages = [
-                {"role": "system", "content": "You are a helpful historian."},
+                {"role": "system", "content": role_content},
                 {"role": "user", "content" : curr_prompt},
             ]
         )
@@ -194,6 +203,7 @@ def evaluate(eval_prompt, examples):
 # Function to create prompt for GPT3
 # Based on different type of questions, different prompt is invoked
 def create_prompt(qtype, choice_original, similarity_list, question, autocast_df, curr_choices_list):
+    role = question + " - Who would be the best person to answer the above question? Don't explain, answer in 2 to 6 words."
     prompt = ""
     qtype_prompt = ""
     if qtype == 't/f':
@@ -224,7 +234,7 @@ def create_prompt(qtype, choice_original, similarity_list, question, autocast_df
                 A: {autocast_df.loc[i]['a']} \n
                 """
 
-    return eval_prompt, prompt
+    return eval_prompt, prompt, role
 
 # Return top k similarity questions to do few-shot learning
 def top_k_similarity(question, question_index, corpus, k):
@@ -235,6 +245,9 @@ def top_k_similarity(question, question_index, corpus, k):
     """
     cosine_list = []
     for i in range(len(corpus)):
+        #skip the questions with publish_time > closed_time 
+        if (autocast_train_with_dates[question_index][5] > autocast_train_with_dates[i][4]):
+            continue
         curr_corpus_question = corpus[i][0]
         curr_corpus_index = corpus[i][1]
         # print(len(question))
@@ -263,8 +276,8 @@ def calibrated_random_baseline_model(question):
         return 0.5
 
 def get_baseline_results():
-    autocast_questions = json.load(open('../competition/autocast_questions.json')) # from the Autocast dataset
-    test_questions = json.load(open('../competition/autocast_competition_test_set.json'))
+    autocast_questions = json.load(open('competition/autocast_questions.json')) # from the Autocast dataset
+    test_questions = json.load(open('competition/autocast_competition_test_set.json'))
     test_ids = [q['id'] for q in test_questions]
 
     preds = []
@@ -290,7 +303,7 @@ def get_baseline_results():
             ans = float(question['answer'])
             qtypes.append('num')
         answers.append(ans)
-
+    print(preds, answers)
     return preds, answers
 ################################################################################################
 
@@ -304,13 +317,13 @@ def main():
 
 
     print("---------- Get Question CSV ----------")
-    df = pd.read_csv('autocast_questions_shortened.csv')
+    df = pd.read_csv('autocast_experiments/src/autocast_questions_shortened.csv')
     n, _ = df.shape
     print("Total number of questions:", n)
     print()
 
     print("---------- Get Question Embedding ----------")
-    embedding_cache_path = "data/recommendations_embeddings_cache.pkl"
+    embedding_cache_path = "autocast_experiments/src/data/recommendations_embeddings_cache.pkl"
 
     # load the cache if it exists, and save a copy to disk
     try:
@@ -350,9 +363,9 @@ def main():
     print("---------- Calculate Cosine Similarity ----------")
     ####
     # Change this directory to the current directory of your autocast_questions.json
-    autocast_questions = json.load(open('../competition/autocast_questions.json')) # from the Autocast dataset
+    autocast_questions = json.load(open('competition/autocast_questions.json')) # from the Autocast dataset
     # Change this directory to the current directory of your autocast_test_set.json
-    test_questions = json.load(open('../competition/autocast_competition_test_set.json'))
+    test_questions = json.load(open('competition/autocast_competition_test_set.json'))
     test_ids = [q['id'] for q in test_questions]
     ####
     print("Get the embedding for questions not in test set...")
@@ -416,13 +429,13 @@ def main():
 
     # quesitons_indexes = [tf_index, mc_index, num_index]
     # quesitons_indexes = [tf_index]
-    # quesitons_indexes = [num_index]
-    quesitons_indexes = [mc_index]
+    quesitons_indexes = [num_index]
+    # quesitons_indexes = [mc_index]
 
     # types = ["tf", "mc", "num"]
     # types = ["tf"]
-    types = ["mc"]
-    # types = ["num"]
+    # types = ["mc"]
+    types = ["num"]
 
 
     print("---------- Few Shot Learning ----------")
@@ -513,7 +526,7 @@ def main():
             else:
                 test_q_prompt = create_prompt(curr_qtype, i, sim_list, curr_q, df, curr_choices_list)
             # Get the answer
-            test_q_output = evaluate(test_q_prompt[0], test_q_prompt[1])
+            test_q_output = evaluate(test_q_prompt[0], test_q_prompt[1], test_q_prompt[2])
             # print("Current GPT-3 Result:", test_q_output)
             new_output = process_answer(test_q_output, curr_qtype, curr_choices_list)
             # print("New output processed:", new_output)
@@ -540,6 +553,8 @@ def main():
                 results.append(np.abs(p - a))
 
             for p, a in zip(baseline_preds, baseline_ans):
+                print("Printing p and a", p, a)
+                print(np.abs(p - a))
                 baseline_results.append(np.abs(p - a))
 
         else:
@@ -547,7 +562,7 @@ def main():
             for p, a in zip(predictions, answers):
                 brier = brier_score(p, a)
                 if isnan(brier):
-                    results.append()
+                    results.append(0)
                 else:
                     results.append(brier)
             
@@ -562,13 +577,18 @@ def main():
         else:
             mean_res = np.mean(results)*100
 
+        print(baseline_results)
+
         if len(baseline_results) == 0:
             mean_base = 0.
         else:
+            print("in here!")
             mean_base = np.mean(baseline_results)*100
 
+        # print(mean_base)
         # bug with the numerical questions, no idea
         # np.mean() returns an array instead of a number for the numerical questions
+        # [mean_value, mean_value]
         if types[j] == 'num':
             mean_base = mean_base[0]
 
