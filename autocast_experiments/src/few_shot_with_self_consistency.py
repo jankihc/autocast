@@ -9,6 +9,9 @@ import time
 from openai.embeddings_utils import get_embedding, cosine_similarity
 import string
 import os
+from datetime import datetime
+import dateutil.parser
+
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -16,7 +19,7 @@ warnings.filterwarnings('ignore')
 # Can change to improve performance
 #####
 # Change this openai.api_key to your key
-openai.api_key = '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'
+openai.api_key = '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'
 #####
 autocast_train_with_dates = pd.read_csv('autocast_questions_shortened_with_dates.csv')
 
@@ -35,6 +38,10 @@ rate_limit_per_minute = 2
 delay = 60 / rate_limit_per_minute
 # Obtain number of questions on the dataset
 desire_index = 2
+
+# Format for datetime variables
+# date_format = "%Y-%m-%d %H:%M:%S%z"
+date_format = "%Y-%m-%d %H:%M:%S.%f%z"
 
 
 # Brier score for the performance on the train set
@@ -246,7 +253,12 @@ def top_k_similarity(question, question_index, corpus, k):
     cosine_list = []
     for i in range(len(corpus)):
         #skip the questions with publish_time > closed_time 
-        if (autocast_train_with_dates[question_index][5] > autocast_train_with_dates[i][4]):
+        # print("Question index: ", autocast_train_with_dates.iloc[question_index]["close_date"])
+        # print("Current index: ", autocast_train_with_dates.iloc[i]["publish_date"])
+        real_time_question_index = dateutil.parser.parse(autocast_train_with_dates.iloc[question_index]["close_date"])
+        real_time_i_index = dateutil.parser.parse(autocast_train_with_dates.iloc[i]["publish_date"])
+        # print(real_time_question_index > real_time_i_index)
+        if (real_time_question_index > real_time_i_index):
             continue
         curr_corpus_question = corpus[i][0]
         curr_corpus_index = corpus[i][1]
@@ -276,8 +288,9 @@ def calibrated_random_baseline_model(question):
         return 0.5
 
 def get_baseline_results():
-    autocast_questions = json.load(open('competition/autocast_questions.json')) # from the Autocast dataset
-    test_questions = json.load(open('competition/autocast_competition_test_set.json'))
+    autocast_questions = json.load(open('../../competition/autocast_questions.json')) # from the Autocast dataset
+    # autocast_questions = pd.read_csv('autocast_questions_shortened_with_dates.csv')
+    test_questions = json.load(open('../../competition/autocast_competition_test_set.json'))
     test_ids = [q['id'] for q in test_questions]
 
     preds = []
@@ -303,7 +316,7 @@ def get_baseline_results():
             ans = float(question['answer'])
             qtypes.append('num')
         answers.append(ans)
-    print(preds, answers)
+    # print(preds, answers)
     return preds, answers
 ################################################################################################
 
@@ -315,15 +328,16 @@ def main():
     print("Done!")
     print()
 
-
     print("---------- Get Question CSV ----------")
-    df = pd.read_csv('autocast_experiments/src/autocast_questions_shortened.csv')
+    # df = pd.read_csv('autocast_experiments/src/autocast_questions_shortened.csv')
+    df = pd.read_csv('autocast_questions_shortened.csv')
     n, _ = df.shape
     print("Total number of questions:", n)
     print()
 
     print("---------- Get Question Embedding ----------")
-    embedding_cache_path = "autocast_experiments/src/data/recommendations_embeddings_cache.pkl"
+    # embedding_cache_path = "autocast_experiments/src/data/recommendations_embeddings_cache.pkl"
+    embedding_cache_path = "data/recommendations_embeddings_cache.pkl"
 
     # load the cache if it exists, and save a copy to disk
     try:
@@ -363,9 +377,9 @@ def main():
     print("---------- Calculate Cosine Similarity ----------")
     ####
     # Change this directory to the current directory of your autocast_questions.json
-    autocast_questions = json.load(open('competition/autocast_questions.json')) # from the Autocast dataset
+    autocast_questions = json.load(open('../../competition/autocast_questions.json')) # from the Autocast dataset
     # Change this directory to the current directory of your autocast_test_set.json
-    test_questions = json.load(open('competition/autocast_competition_test_set.json'))
+    test_questions = json.load(open('../../competition/autocast_competition_test_set.json'))
     test_ids = [q['id'] for q in test_questions]
     ####
     print("Get the embedding for questions not in test set...")
@@ -554,8 +568,11 @@ def main():
 
             for p, a in zip(baseline_preds, baseline_ans):
                 print("Printing p and a", p, a)
-                print(np.abs(p - a))
-                baseline_results.append(np.abs(p - a))
+                res = np.abs(p - a)
+                if type(res) == np.ndarray:
+                    baseline_results.append(res[0])
+                else:
+                    baseline_results.append(res)
 
         else:
         # if types[j] == "mc" or types[j] == 'tf':
@@ -577,7 +594,7 @@ def main():
         else:
             mean_res = np.mean(results)*100
 
-        print(baseline_results)
+        print("Baseline results", baseline_results)
 
         if len(baseline_results) == 0:
             mean_base = 0.
@@ -585,12 +602,13 @@ def main():
             print("in here!")
             mean_base = np.mean(baseline_results)*100
 
+        print("Mean baseline:", mean_base)
         # print(mean_base)
         # bug with the numerical questions, no idea
         # np.mean() returns an array instead of a number for the numerical questions
         # [mean_value, mean_value]
-        if types[j] == 'num':
-            mean_base = mean_base[0]
+        # if types[j] == 'num':
+        #     mean_base = mean_base[0]
 
         with open(os.path.join(f'submission_{desire_index}_{types[j]}', f'{types[j]}_report.txt'), 'w+') as f:
             f.write(f"GPT Model performance on {types[j]} questions: {mean_res:.2f} \n")

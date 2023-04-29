@@ -1,0 +1,2 @@
+GPT Model performance on num questions: 22.05 
+Baseline model performance on num questions: 49.28
